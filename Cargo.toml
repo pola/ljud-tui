@@ -1,0 +1,24 @@
+[package]
+name = "ljud"
+version = "0.1.0"
+edition = "2021"
+description = "A small terminal Spotify client that controls Spotify Connect speakers, with custom speaker names"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+dirs = "5"
+open = "5"
+rand = "0.8"
+ratatui = "0.29"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+toml = "0.8"
+url = "2"
+
+[profile.release]
+strip = true
+lto = "thin"
