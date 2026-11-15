@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod auth;
 mod config;
+mod cover;
 mod local;
 mod ui;
 

@@ -13,12 +13,43 @@ pub struct Config {
     /// Port of the login redirect, i.e. `http://127.0.0.1:<port>/login`.
     /// That exact URI must be registered as a Redirect URI in your Spotify app.
     pub redirect_port: u16,
+    /// Album art in the now-playing bar: "blocks" (color), "ascii" or "off".
+    pub cover: CoverMode,
     pub librespot: Librespot,
     /// Custom speaker names, keyed by Spotify Connect device id.
     pub aliases: BTreeMap<String, String>,
     /// Custom speaker names keyed by the name the device reports. Used as a
     /// fallback in case a speaker's device id changes.
     pub name_aliases: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CoverMode {
+    /// Two color pixels per character cell ("▀" with foreground/background colors).
+    #[default]
+    Blocks,
+    /// Monochrome characters by brightness.
+    Ascii,
+    Off,
+}
+
+impl CoverMode {
+    pub fn next(self) -> Self {
+        match self {
+            CoverMode::Blocks => CoverMode::Ascii,
+            CoverMode::Ascii => CoverMode::Off,
+            CoverMode::Off => CoverMode::Blocks,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CoverMode::Blocks => "color blocks",
+            CoverMode::Ascii => "ASCII",
+            CoverMode::Off => "off",
+        }
+    }
 }
 
 /// Optional: run librespot so this computer shows up as a speaker.
@@ -37,6 +68,7 @@ impl Default for Config {
         Config {
             client_id: String::new(),
             redirect_port: 8989,
+            cover: CoverMode::default(),
             librespot: Librespot::default(),
             aliases: BTreeMap::new(),
             name_aliases: BTreeMap::new(),
@@ -77,6 +109,7 @@ const HEADER: &str = "\
 #
 # client_id:     Client ID of your app at https://developer.spotify.com/dashboard
 #                Its Redirect URIs must include http://127.0.0.1:<redirect_port>/login
+# cover:         album art in the now-playing bar: blocks, ascii or off (key c)
 # [librespot]:   set enabled = true to make this computer a speaker
 #                (run `ljud local-login` once first).
 # [aliases]:     custom speaker names, keyed by device id (rename with `e` in the

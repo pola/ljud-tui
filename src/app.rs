@@ -29,6 +29,7 @@ pub enum Msg {
     Devices(Vec<Device>),
     NeedDevice(Option<Value>),
     Done { info: String, reload_playlists: bool, reload_view: bool },
+    Cover { url: String, image: Option<image::RgbImage> },
     Error(String),
     Nothing,
 }
@@ -166,6 +167,9 @@ pub struct App {
     pub quit: bool,
     /// Views to return to with Backspace.
     history: Vec<View>,
+    /// Album art of the playing song (see `cover_url`).
+    pub cover: Option<image::RgbImage>,
+    cover_url: Option<String>,
 }
 
 fn last_device_path() -> std::path::PathBuf {
@@ -203,6 +207,8 @@ pub fn run(api: Api, cfg: Config, me: User, note: Option<String>) -> Result<()> 
             .filter(|s| !s.is_empty()),
         quit: false,
         history: Vec::new(),
+        cover: None,
+        cover_url: None,
     };
     app.load_playlists();
     app.open_view(View::Liked);
@@ -506,6 +512,28 @@ impl App {
         });
     }
 
+    /// Download the playing song's cover (64 px) if it's shown and not loaded yet.
+    fn fetch_cover(&self) {
+        if self.cfg.cover == crate::config::CoverMode::Off || self.cover.is_some() {
+            return;
+        }
+        let Some(url) = self.cover_url.clone() else { return };
+        self.bg(move |api| {
+            let image = api.fetch_bytes(&url).ok().and_then(|b| crate::cover::decode(&b).ok());
+            Ok(Msg::Cover { url, image })
+        });
+    }
+
+    fn cycle_cover(&mut self) {
+        self.cfg.cover = self.cfg.cover.next();
+        let saved = self.cfg.save();
+        self.fetch_cover();
+        match saved {
+            Ok(()) => self.info(format!("Album art: {}", self.cfg.cover.label())),
+            Err(e) => self.error(format!("Saving config: {e:#}")),
+        }
+    }
+
     fn reload_view(&mut self) {
         self.pending_select = self.rows_state.selected();
         self.open_view(self.view.clone());
@@ -564,6 +592,17 @@ impl App {
                 }
                 let old = self.playback.as_ref().and_then(|p| p.track.as_ref()).map(|t| t.uri.clone());
                 let new = p.as_ref().and_then(|p| p.track.as_ref()).map(|t| t.uri.clone());
+                let url = p
+                    .as_ref()
+                    .and_then(|p| p.track.as_ref())
+                    .and_then(|t| t.album_ref.as_ref())
+                    .and_then(|a| a.image(64))
+                    .map(String::from);
+                if url != self.cover_url {
+                    self.cover_url = url;
+                    self.cover = None;
+                    self.fetch_cover();
+                }
                 self.playback = p;
                 self.playback_at = Instant::now();
                 if self.view == View::Queue && old.is_some() && old != new {
@@ -596,6 +635,11 @@ impl App {
                 }
                 if reload_view {
                     self.reload_view();
+                }
+            }
+            Msg::Cover { url, image } => {
+                if self.cover_url.as_deref() == Some(url.as_str()) {
+                    self.cover = image;
                 }
             }
             Msg::Error(e) => self.error(e),
@@ -788,6 +832,7 @@ impl App {
             F(10) if k.modifiers.contains(KeyModifiers::SHIFT) => self.open_menu(),
             Backspace => self.go_back(),
             Char('u') => self.navigate(View::Queue),
+            Char('c') => self.cycle_cover(),
             Char('d') => self.open_devices(),
             Char(' ') => self.toggle_pause(),
             Char('n') => self.control("Next", |api| api.next()),

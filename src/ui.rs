@@ -26,10 +26,20 @@ fn pane(title: String, focused: bool) -> Block<'static> {
     }
 }
 
+/// Height of the now-playing bar: taller when it shows album art.
+fn bar_height(app: &App, total: u16) -> u16 {
+    let has_track = app.playback.as_ref().is_some_and(|p| p.track.is_some());
+    if has_track && app.cfg.cover != crate::config::CoverMode::Off && total >= 24 {
+        9
+    } else {
+        4
+    }
+}
+
 pub fn draw(f: &mut Frame, app: &mut App) {
     let [main, bar, status] = Layout::vertical([
         Constraint::Min(6),
-        Constraint::Length(4),
+        Constraint::Length(bar_height(app, f.area().height)),
         Constraint::Length(1),
     ])
     .areas(f.area());
@@ -179,8 +189,24 @@ fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
     }
     title_spans.push(Span::raw(" "));
     let block = pane(String::new(), false).title(Line::from(title_spans));
-    let inner = block.inner(area);
+    let mut inner = block.inner(area);
     f.render_widget(block, area);
+
+    // Album art on the left when the bar is tall enough (square: 2 columns per row).
+    let tall = inner.height >= 5;
+    if tall {
+        let cols = inner.height * 2;
+        let [art, _, rest] =
+            Layout::horizontal([Constraint::Length(cols), Constraint::Length(2), Constraint::Min(10)]).areas(inner);
+        match &app.cover {
+            Some(img) => f.render_widget(crate::cover::Cover { image: img, mode: app.cfg.cover }, art),
+            None => f.render_widget(
+                Paragraph::new("♪").style(dim).alignment(ratatui::layout::Alignment::Center),
+                art.inner(ratatui::layout::Margin::new(0, art.height / 2)),
+            ),
+        }
+        inner = rest;
+    }
 
     let icon = if p.is_playing { "▶" } else { "❚❚" };
     let line1 = match &p.track {
@@ -206,7 +232,31 @@ fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("─".repeat(bar_w - filled), dim),
         Span::raw(times),
     ]);
-    f.render_widget(Paragraph::new(vec![line1, line2]), inner);
+    if !tall {
+        f.render_widget(Paragraph::new(vec![line1, line2]), inner);
+        return;
+    }
+    // Tall layout: title, artists and album on separate lines, progress at the bottom.
+    let [text, progress] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let lines = match &p.track {
+        Some(t) => {
+            let album = t.album_ref.as_ref().map(|a| match &a.year {
+                Some(y) => format!("{} ({y})", a.name),
+                None => a.name.clone(),
+            });
+            vec![
+                Line::from(vec![
+                    Span::styled(format!("{icon} "), Style::new().fg(ACCENT)),
+                    Span::styled(t.name.clone(), Style::new().bold()),
+                ]),
+                Line::from(format!("  {}", t.artists)),
+                Line::from(Span::styled(format!("  {}", album.unwrap_or_else(|| t.album.clone())), dim)),
+            ]
+        }
+        None => vec![line1],
+    };
+    f.render_widget(Paragraph::new(lines), text);
+    f.render_widget(Paragraph::new(line2), progress);
 }
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
@@ -239,6 +289,7 @@ const HELP: &[(&str, &str)] = &[
     ("m", "menu for the selected song/album/artist"),
     ("Backspace", "back to the previous list"),
     ("u", "queue (up next); add songs via the m menu"),
+    ("c", "album art: color blocks → ASCII → off"),
     ("/", "search tracks, albums, playlists"),
     ("d", "speakers: Enter = play there, e = rename, r = refresh"),
     ("space", "play / pause"),

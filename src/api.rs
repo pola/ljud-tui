@@ -104,6 +104,19 @@ pub struct Album {
     pub artist_refs: Vec<Artist>,
     /// Release year, from the album's `release_date` (already in every album object).
     pub year: Option<String>,
+    /// Cover images (url, width), smallest first.
+    pub images: Vec<(String, u64)>,
+}
+
+impl Album {
+    /// The smallest cover image at least `px` wide (or the largest there is).
+    pub fn image(&self, px: u64) -> Option<&str> {
+        self.images
+            .iter()
+            .find(|(_, w)| *w >= px)
+            .or(self.images.last())
+            .map(|(u, _)| u.as_str())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -229,6 +242,18 @@ fn parse_album(v: &Value) -> Option<Album> {
             .and_then(|d| d.get(..4))
             .filter(|y| y.chars().all(|c| c.is_ascii_digit()) && *y != "0000")
             .map(String::from),
+        images: {
+            let mut v: Vec<(String, u64)> = v["images"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|i| Some((i["url"].as_str()?.to_string(), i["width"].as_u64().unwrap_or(640))))
+                        .collect()
+                })
+                .unwrap_or_default();
+            v.sort_by_key(|(_, w)| *w);
+            v
+        },
     })
 }
 
@@ -344,6 +369,11 @@ impl Api {
             .into());
         }
         bail!("Spotify kept rejecting or rate-limiting the request to {path}")
+    }
+
+    /// Download a file without authentication (e.g. a cover image from Spotify's CDN).
+    pub fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        Ok(self.http.get(url).send()?.error_for_status()?.bytes()?.to_vec())
     }
 
     fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value> {

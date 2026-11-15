@@ -7,6 +7,7 @@ with **custom names for speakers**. Written in Rust.
 - Browse your playlists, albums, artists and Liked songs
 - A menu (`m`) on any song, album or artist: add to queue, go to the album or artist(s), play
 - The queue (`u`): what's playing and what comes next
+- Album art of the playing song in the now-playing bar, as color blocks or ASCII (`c`)
 - Play on any Spotify Connect speaker on your account/LAN, with play/pause,
   next/previous, seek, volume, shuffle and repeat
 - Create, rename and delete playlists; add and remove tracks; like and unlike tracks
@@ -41,6 +42,7 @@ Run `ljud logout` to remove it.
 | m | menu for the selected song/album/artist (also Shift+F10 / Menu key) |
 | Backspace | back to the previous list |
 | u | queue (up next) |
+| c | album art: color blocks → ASCII → off |
 | / | search |
 | d | speakers: Enter = play there, e = rename, r = refresh |
 | space | play / pause |
@@ -78,6 +80,18 @@ search for the artist's songs (ranked by popularity).
 can add songs to the queue but not remove, reorder or jump to them, so selecting
 a queued song opens its menu. Spotify also doesn't mark which upcoming songs were
 queued by you and which simply come next in the playlist or album.
+
+## Album art
+
+The now-playing bar shows the playing song's cover (Spotify's 64 px version,
+downloaded once per song). `c` switches between:
+
+- `blocks`: two color pixels per character cell (needs a terminal with true color)
+- `ascii`: monochrome characters by brightness, contrast-stretched per cover
+- `off`: the compact two-line bar
+
+The choice is saved as `cover = "…"` in the config. On terminals shorter than
+24 lines the bar stays compact.
 
 ## Speaker names
 
