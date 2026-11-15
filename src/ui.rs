@@ -94,7 +94,10 @@ fn draw_rows(f: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(Span::styled("◎", dim)),
                 Cell::from(a.name.clone()),
                 Cell::from(a.artists.clone()),
-                Cell::from(Span::styled("album", dim)),
+                Cell::from(Span::styled(
+                    a.year.as_ref().map(|y| format!("album · {y}")).unwrap_or_else(|| "album".into()),
+                    dim,
+                )),
                 Cell::from(Span::styled(format!("{} tr", a.total), dim)),
             ]),
             Row::Artist(a) => TRow::new(vec![

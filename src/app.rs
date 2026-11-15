@@ -516,7 +516,10 @@ impl App {
             View::Liked => "♥ Liked songs".into(),
             View::Playlist(p) if p.owner_id == self.me.id => format!("♫ {}", p.name),
             View::Playlist(p) => format!("♫ {} — by {}", p.name, p.owner_name),
-            View::Album(a) => format!("◎ {} — {}", a.name, a.artists),
+            View::Album(a) => match &a.year {
+                Some(y) => format!("◎ {} — {} ({y})", a.name, a.artists),
+                None => format!("◎ {} — {}", a.name, a.artists),
+            },
             View::Search(q) => format!("Search: “{q}”"),
             View::Artist(a) => format!("Artist: {}", a.name),
             View::Queue => "Queue".into(),

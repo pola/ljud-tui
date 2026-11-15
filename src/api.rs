@@ -102,6 +102,8 @@ pub struct Album {
     pub artists: String,
     pub total: u64,
     pub artist_refs: Vec<Artist>,
+    /// Release year, from the album's `release_date` (already in every album object).
+    pub year: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -222,6 +224,11 @@ fn parse_album(v: &Value) -> Option<Album> {
         artists: join_artists(&v["artists"]),
         total: v["total_tracks"].as_u64().unwrap_or(0),
         artist_refs: parse_artists(&v["artists"]),
+        year: v["release_date"]
+            .as_str()
+            .and_then(|d| d.get(..4))
+            .filter(|y| y.chars().all(|c| c.is_ascii_digit()) && *y != "0000")
+            .map(String::from),
     })
 }
 
