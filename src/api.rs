@@ -70,6 +70,17 @@ pub struct Track {
     pub duration_ms: u64,
     /// Position in the containing playlist/album (used as play offset).
     pub pos: usize,
+    /// The album the track is on (for "Go to album").
+    pub album_ref: Option<Album>,
+    /// The track's artists (for "Go to artist").
+    pub artist_refs: Vec<Artist>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Artist {
+    pub id: String,
+    pub uri: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +101,7 @@ pub struct Album {
     pub name: String,
     pub artists: String,
     pub total: u64,
+    pub artist_refs: Vec<Artist>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +129,7 @@ pub struct SearchResults {
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
     pub playlists: Vec<Playlist>,
+    pub artists: Vec<Artist>,
 }
 
 fn s(v: &Value) -> String {
@@ -134,7 +147,24 @@ fn join_artists(v: &Value) -> String {
         .unwrap_or_default()
 }
 
-pub fn parse_track(v: &Value, pos: usize, album: Option<&str>) -> Option<Track> {
+/// Artists with a Spotify id (local files have none).
+fn parse_artists(v: &Value) -> Vec<Artist> {
+    v.as_array()
+        .map(|a| a.iter().filter_map(parse_artist).collect())
+        .unwrap_or_default()
+}
+
+fn parse_artist(v: &Value) -> Option<Artist> {
+    Some(Artist {
+        id: v["id"].as_str()?.to_string(),
+        uri: s(&v["uri"]),
+        name: s(&v["name"]),
+    })
+}
+
+/// `album`: the album the track belongs to, for album track listings whose
+/// (simplified) track objects don't include it.
+pub fn parse_track(v: &Value, pos: usize, album: Option<&Album>) -> Option<Track> {
     if v.is_null() {
         return None;
     }
@@ -150,10 +180,12 @@ pub fn parse_track(v: &Value, pos: usize, album: Option<&str>) -> Option<Track> 
         name: v["name"].as_str().unwrap_or("?").to_string(),
         artists,
         album: album
-            .map(String::from)
+            .map(|a| a.name.clone())
             .unwrap_or_else(|| s(&v["album"]["name"])),
         duration_ms: v["duration_ms"].as_u64().unwrap_or(0),
         pos,
+        album_ref: album.cloned().or_else(|| parse_album(&v["album"])),
+        artist_refs: parse_artists(&v["artists"]),
     })
 }
 
@@ -189,6 +221,7 @@ fn parse_album(v: &Value) -> Option<Album> {
         name: s(&v["name"]),
         artists: join_artists(&v["artists"]),
         total: v["total_tracks"].as_u64().unwrap_or(0),
+        artist_refs: parse_artists(&v["artists"]),
     })
 }
 
@@ -397,7 +430,7 @@ impl Api {
         Ok(items
             .iter()
             .enumerate()
-            .filter_map(|(i, t)| parse_track(t, i, Some(&album.name)))
+            .filter_map(|(i, t)| parse_track(t, i, Some(album)))
             .collect())
     }
 
@@ -407,7 +440,7 @@ impl Api {
                 "/search",
                 &[
                     ("q", query.to_string()),
-                    ("type", "track,album,playlist".into()),
+                    ("type", "track,album,playlist,artist".into()),
                     ("limit", limit.into()),
                 ],
             )
@@ -426,7 +459,55 @@ impl Api {
                 .collect(),
             albums: list("albums").iter().filter_map(parse_album).collect(),
             playlists: list("playlists").iter().filter_map(parse_playlist).collect(),
+            artists: list("artists").iter().filter_map(parse_artist).collect(),
         })
+    }
+
+    /// An artist page: popular tracks and albums & singles.
+    ///
+    /// Spotify blocks the artist top-tracks endpoint for development-mode
+    /// apps, so "popular" is approximated by a track search for the artist
+    /// (search ranks by popularity), keeping only tracks by this artist.
+    pub fn artist_page(&self, artist: &Artist) -> Result<(Vec<Track>, Vec<Album>)> {
+        // Spotify returns only ~5 hits per page for an `artist:` search (even
+        // with limit=10), but pages at offsets 0, 10, 20 are distinct, so
+        // collect up to three pages. Hits by other artists are filtered out.
+        let mut tracks: Vec<Track> = Vec::new();
+        for offset in ["0", "10", "20"] {
+            let found = self.get(
+                "/search",
+                &[
+                    ("q", format!("artist:\"{}\"", artist.name.replace('"', ""))),
+                    ("type", "track".into()),
+                    ("limit", "10".into()),
+                    ("offset", offset.into()),
+                ],
+            )?;
+            let page = found["tracks"]["items"].as_array().cloned().unwrap_or_default();
+            for t in page.iter().filter_map(|t| parse_track(t, 0, None)) {
+                if t.artist_refs.iter().any(|a| a.id == artist.id) && !tracks.iter().any(|x| x.uri == t.uri) {
+                    tracks.push(t);
+                }
+            }
+            if tracks.len() >= 10 || page.is_empty() {
+                break;
+            }
+        }
+        tracks.truncate(10);
+        for (i, t) in tracks.iter_mut().enumerate() {
+            t.pos = i;
+        }
+        // Development-mode apps get at most 10 items per page here.
+        let albums = self
+            .paged(
+                &format!("/artists/{}/albums", artist.id),
+                &[("include_groups", "album,single".into()), ("limit", "10".into())],
+                200,
+            )?
+            .iter()
+            .filter_map(parse_album)
+            .collect();
+        Ok((tracks, albums))
     }
 
     // ------------------------------------------------------------ playback

@@ -97,6 +97,13 @@ fn draw_rows(f: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(Span::styled("album", dim)),
                 Cell::from(Span::styled(format!("{} tr", a.total), dim)),
             ]),
+            Row::Artist(a) => TRow::new(vec![
+                Cell::from(Span::styled("•", dim)),
+                Cell::from(a.name.clone()),
+                Cell::from(""),
+                Cell::from(Span::styled("artist", dim)),
+                Cell::from(""),
+            ]),
             Row::Playlist(p) => TRow::new(vec![
                 Cell::from(Span::styled("♫", dim)),
                 Cell::from(p.name.clone()),
@@ -225,7 +232,9 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 const HELP: &[(&str, &str)] = &[
     ("Tab / ← →", "switch between library and track list"),
     ("↑ ↓  j k  PgUp PgDn  g G", "move"),
-    ("Enter", "open playlist/album · play track"),
+    ("Enter", "open playlist/album/artist · play track"),
+    ("m", "menu for the selected song/album/artist"),
+    ("Backspace", "back to the previous list"),
     ("/", "search tracks, albums, playlists"),
     ("d", "speakers: Enter = play there, e = rename, r = refresh"),
     ("space", "play / pause"),
@@ -279,6 +288,20 @@ fn draw_popup(f: &mut Frame, app: &mut App) {
             .wrap(Wrap { trim: true })
             .block(pane(" Confirm ".into(), true));
             f.render_widget(p, r);
+        }
+        Popup::Menu { title, items, state } => {
+            let h = (items.len() as u16 + 2).clamp(3, area.height.saturating_sub(4));
+            let w = items.iter().map(|(l, _)| l.chars().count()).max().unwrap_or(20).max(title.chars().count() + 4) as u16 + 6;
+            let r = centered(area, w.clamp(30, 90), h);
+            f.render_widget(Clear, r);
+            let list = List::new(items.iter().map(|(l, _)| ListItem::new(l.clone())).collect::<Vec<_>>())
+                .block(
+                    pane(format!(" {title} "), true)
+                        .title_bottom(Line::from(Span::styled(" Enter select · Esc close ", dim))),
+                )
+                .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+                .highlight_symbol("▌");
+            f.render_stateful_widget(list, r, state);
         }
         Popup::PickPlaylist { label, choices, state, .. } => {
             let h = (choices.len() as u16 + 2).clamp(3, area.height.saturating_sub(4));

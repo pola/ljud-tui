@@ -3,8 +3,9 @@
 A small terminal Spotify client for controlling Spotify Connect speakers,
 with **custom names for speakers**. Written in Rust.
 
-- Search tracks, albums and playlists
-- Browse your playlists, albums and Liked songs
+- Search tracks, artists, albums and playlists
+- Browse your playlists, albums, artists and Liked songs
+- A menu (`m`) on any song, album or artist: go to the album or artist(s), play
 - Play on any Spotify Connect speaker on your account/LAN, with play/pause,
   next/previous, seek, volume, shuffle and repeat
 - Create, rename and delete playlists; add and remove tracks; like and unlike tracks
@@ -35,7 +36,9 @@ Run `ljud logout` to remove it.
 |---|---|
 | Tab / ← → | switch between library and track list |
 | ↑ ↓ / j k, PgUp PgDn, g G | move |
-| Enter | open playlist/album, or play the track |
+| Enter | open playlist/album/artist, or play the track |
+| m | menu for the selected song/album/artist (also Shift+F10 / Menu key) |
+| Backspace | back to the previous list |
 | / | search |
 | d | speakers: Enter = play there, e = rename, r = refresh |
 | space | play / pause |
@@ -51,6 +54,21 @@ Run `ljud logout` to remove it.
 | R | refresh |
 | ? | help |
 | q | quit |
+
+## Menus
+
+`m` opens a menu for the selected row (not necessarily the playing song). The
+entries come in the same order as in the Android app:
+
+| Row | Menu |
+|---|---|
+| Song | Go to album, then Go to artist (one per artist) |
+| Album | Play album, Go to album, then Go to artist (one per artist) |
+| Artist | Play artist, Go to artist |
+
+An artist page lists popular songs and albums & singles. Spotify blocks its
+"top tracks" endpoint for development-mode apps, so "Popular" comes from a
+search for the artist's songs (ranked by popularity).
 
 ## Speaker names
 

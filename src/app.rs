@@ -1,4 +1,4 @@
-use crate::api::{self, Album, Api, Device, Playback, Playlist, Track, User};
+use crate::api::{self, Album, Api, Artist, Device, Playback, Playlist, Track, User};
 use crate::config::{data_dir, Config};
 use anyhow::Result;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -39,6 +39,7 @@ pub enum Row {
     Track(Track),
     Album(Album),
     Playlist(Playlist),
+    Artist(Artist),
 }
 
 #[derive(Clone, PartialEq)]
@@ -47,6 +48,43 @@ pub enum View {
     Playlist(Playlist),
     Album(Album),
     Search(String),
+    Artist(Artist),
+}
+
+#[derive(Clone)]
+pub enum MenuAction {
+    PlayAlbum(Album),
+    PlayArtist(Artist),
+    OpenAlbum(Album),
+    OpenArtist(Artist),
+}
+
+pub type MenuItem = (String, MenuAction);
+
+/// The context menu for a row: a title and its entries.
+///
+/// Keep the order in sync with the Android app (`menuFor` in MainViewModel.kt):
+/// "Play …" first for albums and artists, then the album, then the artist(s).
+pub fn menu_for(row: &Row) -> Option<(String, Vec<MenuItem>)> {
+    let album = |a: &Album| (format!("Go to album “{}”", a.name), MenuAction::OpenAlbum(a.clone()));
+    let artist = |a: &Artist| (format!("Go to artist “{}”", a.name), MenuAction::OpenArtist(a.clone()));
+    match row {
+        Row::Track(t) => {
+            let mut items: Vec<MenuItem> = t.album_ref.iter().map(album).collect();
+            items.extend(t.artist_refs.iter().map(artist));
+            Some((t.name.clone(), items))
+        }
+        Row::Album(a) => {
+            let mut items = vec![("Play album".to_string(), MenuAction::PlayAlbum(a.clone())), album(a)];
+            items.extend(a.artist_refs.iter().map(artist));
+            Some((a.name.clone(), items))
+        }
+        Row::Artist(a) => Some((
+            a.name.clone(),
+            vec![("Play artist".to_string(), MenuAction::PlayArtist(a.clone())), artist(a)],
+        )),
+        Row::Header(_) | Row::Playlist(_) => None,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -55,6 +93,7 @@ pub enum Focus {
     Rows,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Popup {
     Closed,
     Help,
@@ -62,6 +101,7 @@ pub enum Popup {
     Input { purpose: InputPurpose, text: String },
     Confirm { purpose: ConfirmPurpose, prompt: String },
     PickPlaylist { uris: Vec<String>, label: String, choices: Vec<Playlist>, state: ListState },
+    Menu { title: String, items: Vec<MenuItem>, state: ListState },
 }
 
 pub enum InputPurpose {
@@ -115,6 +155,8 @@ pub struct App {
     pending_play: Option<Option<Value>>,
     last_device: Option<String>,
     pub quit: bool,
+    /// Views to return to with Backspace.
+    history: Vec<View>,
 }
 
 fn last_device_path() -> std::path::PathBuf {
@@ -151,6 +193,7 @@ pub fn run(api: Api, cfg: Config, me: User, note: Option<String>) -> Result<()> 
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         quit: false,
+        history: Vec::new(),
     };
     app.load_playlists();
     app.open_view(View::Liked);
@@ -330,6 +373,10 @@ impl App {
                             rows.push(Row::Header("Tracks".into()));
                             rows.extend(r.tracks.into_iter().map(Row::Track));
                         }
+                        if !r.artists.is_empty() {
+                            rows.push(Row::Header("Artists".into()));
+                            rows.extend(r.artists.into_iter().map(Row::Artist));
+                        }
                         if !r.albums.is_empty() {
                             rows.push(Row::Header("Albums".into()));
                             rows.extend(r.albums.into_iter().map(Row::Album));
@@ -340,6 +387,19 @@ impl App {
                         }
                         rows
                     }
+                    View::Artist(a) => {
+                        let (tracks, albums) = api.artist_page(a)?;
+                        let mut rows = Vec::new();
+                        if !tracks.is_empty() {
+                            rows.push(Row::Header("Popular".into()));
+                            rows.extend(tracks.into_iter().map(Row::Track));
+                        }
+                        if !albums.is_empty() {
+                            rows.push(Row::Header("Albums & singles".into()));
+                            rows.extend(albums.into_iter().map(Row::Album));
+                        }
+                        rows
+                    }
                 })
             })();
             Ok(match rows {
@@ -347,6 +407,50 @@ impl App {
                 Err(e) => Msg::RowsFailed { seq, err: format!("{e:#}") },
             })
         });
+    }
+
+    /// Open a view, remembering the current one for Backspace.
+    fn navigate(&mut self, view: View) {
+        if self.view != view {
+            self.history.push(self.view.clone());
+            if self.history.len() > 50 {
+                self.history.remove(0);
+            }
+        }
+        self.open_view(view);
+        self.focus = Focus::Rows;
+    }
+
+    fn go_back(&mut self) {
+        match self.history.pop() {
+            Some(v) => {
+                self.open_view(v);
+                self.focus = Focus::Rows;
+            }
+            None => self.info("Nothing to go back to."),
+        }
+    }
+
+    fn open_menu(&mut self) {
+        if self.focus != Focus::Rows {
+            return;
+        }
+        let Some(row) = self.rows_state.selected().and_then(|i| self.rows.get(i)) else { return };
+        match menu_for(row) {
+            Some((title, items)) if !items.is_empty() => {
+                self.popup = Popup::Menu { title, items, state: ListState::default().with_selected(Some(0)) }
+            }
+            _ => {}
+        }
+    }
+
+    fn run_menu_action(&mut self, action: MenuAction) {
+        match action {
+            MenuAction::OpenAlbum(a) => self.navigate(View::Album(a)),
+            MenuAction::OpenArtist(a) => self.navigate(View::Artist(a)),
+            MenuAction::PlayAlbum(a) => self.play(None, Some(json!({ "context_uri": a.uri }))),
+            MenuAction::PlayArtist(a) => self.play(None, Some(json!({ "context_uri": a.uri }))),
+        }
     }
 
     fn reload_view(&mut self) {
@@ -361,6 +465,7 @@ impl App {
             View::Playlist(p) => format!("♫ {} — by {}", p.name, p.owner_name),
             View::Album(a) => format!("◎ {} — {}", a.name, a.artists),
             View::Search(q) => format!("Search: “{q}”"),
+            View::Artist(a) => format!("Artist: {}", a.name),
         }
     }
 
@@ -479,7 +584,7 @@ impl App {
         let body = match &self.view {
             View::Playlist(p) => json!({ "context_uri": p.uri, "offset": { "position": t.pos } }),
             View::Album(a) => json!({ "context_uri": a.uri, "offset": { "position": t.pos } }),
-            View::Liked | View::Search(_) => {
+            View::Liked | View::Search(_) | View::Artist(_) => {
                 let uris: Vec<&str> = self.rows[idx..]
                     .iter()
                     .filter_map(|r| match r {
@@ -545,15 +650,15 @@ impl App {
                     Some(p) => View::Playlist(p),
                     None => View::Liked,
                 };
-                self.open_view(view);
-                self.focus = Focus::Rows;
+                self.navigate(view);
             }
             Focus::Rows => {
                 let Some(idx) = self.rows_state.selected() else { return };
                 match self.rows.get(idx).cloned() {
                     Some(Row::Track(_)) => self.play_row(idx),
-                    Some(Row::Album(a)) => self.open_view(View::Album(a)),
-                    Some(Row::Playlist(p)) => self.open_view(View::Playlist(p)),
+                    Some(Row::Album(a)) => self.navigate(View::Album(a)),
+                    Some(Row::Playlist(p)) => self.navigate(View::Playlist(p)),
+                    Some(Row::Artist(a)) => self.navigate(View::Artist(a)),
                     _ => {}
                 }
             }
@@ -612,6 +717,9 @@ impl App {
             Home | Char('g') => self.move_focused(isize::MIN / 2),
             End | Char('G') => self.move_focused(isize::MAX / 2),
             Enter => self.activate(),
+            Char('m') | Menu => self.open_menu(),
+            F(10) if k.modifiers.contains(KeyModifiers::SHIFT) => self.open_menu(),
+            Backspace => self.go_back(),
             Char('d') => self.open_devices(),
             Char(' ') => self.toggle_pause(),
             Char('n') => self.control("Next", |api| api.next()),
@@ -723,6 +831,24 @@ impl App {
         match popup {
             Popup::Closed => Popup::Closed,
             Popup::Help => Popup::Closed,
+            Popup::Menu { title, items, mut state } => match k.code {
+                Esc | Char('q') | Char('m') | Menu => Popup::Closed,
+                Down | Char('j') => {
+                    state.select(move_sel(items.len(), state.selected(), 1));
+                    Popup::Menu { title, items, state }
+                }
+                Up | Char('k') => {
+                    state.select(move_sel(items.len(), state.selected(), -1));
+                    Popup::Menu { title, items, state }
+                }
+                Enter => {
+                    if let Some((_, action)) = state.selected().and_then(|i| items.get(i)).cloned() {
+                        self.run_menu_action(action);
+                    }
+                    Popup::Closed
+                }
+                _ => Popup::Menu { title, items, state },
+            },
             Popup::Input { purpose, mut text } => match k.code {
                 Esc => Popup::Closed,
                 Enter => {
@@ -836,8 +962,7 @@ impl App {
         match purpose {
             InputPurpose::Search => {
                 if !text.is_empty() {
-                    self.open_view(View::Search(text));
-                    self.focus = Focus::Rows;
+                    self.navigate(View::Search(text));
                 }
             }
             InputPurpose::NewPlaylist => {
