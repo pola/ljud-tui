@@ -5,7 +5,8 @@ with **custom names for speakers**. Written in Rust.
 
 - Search tracks, artists, albums and playlists
 - Browse your playlists, albums, artists and Liked songs
-- A menu (`m`) on any song, album or artist: go to the album or artist(s), play
+- A menu (`m`) on any song, album or artist: add to queue, go to the album or artist(s), play
+- The queue (`u`): what's playing and what comes next
 - Play on any Spotify Connect speaker on your account/LAN, with play/pause,
   next/previous, seek, volume, shuffle and repeat
 - Create, rename and delete playlists; add and remove tracks; like and unlike tracks
@@ -39,6 +40,7 @@ Run `ljud logout` to remove it.
 | Enter | open playlist/album/artist, or play the track |
 | m | menu for the selected song/album/artist (also Shift+F10 / Menu key) |
 | Backspace | back to the previous list |
+| u | queue (up next) |
 | / | search |
 | d | speakers: Enter = play there, e = rename, r = refresh |
 | space | play / pause |
@@ -62,13 +64,20 @@ entries come in the same order as in the Android app:
 
 | Row | Menu |
 |---|---|
-| Song | Go to album, then Go to artist (one per artist) |
-| Album | Play album, Go to album, then Go to artist (one per artist) |
+| Song | Add to queue, Go to album, then Go to artist (one per artist) |
+| Album | Play album, Add album to queue, Go to album, then Go to artist (one per artist) |
 | Artist | Play artist, Go to artist |
 
 An artist page lists popular songs and albums & singles. Spotify blocks its
 "top tracks" endpoint for development-mode apps, so "Popular" comes from a
 search for the artist's songs (ranked by popularity).
+
+## Queue
+
+`u` shows the queue: the current song and what plays next. Spotify's public API
+can add songs to the queue but not remove, reorder or jump to them, so selecting
+a queued song opens its menu. Spotify also doesn't mark which upcoming songs were
+queued by you and which simply come next in the playlist or album.
 
 ## Speaker names
 

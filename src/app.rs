@@ -49,10 +49,13 @@ pub enum View {
     Album(Album),
     Search(String),
     Artist(Artist),
+    Queue,
 }
 
 #[derive(Clone)]
 pub enum MenuAction {
+    AddToQueue(Track),
+    AddAlbumToQueue(Album),
     PlayAlbum(Album),
     PlayArtist(Artist),
     OpenAlbum(Album),
@@ -64,18 +67,24 @@ pub type MenuItem = (String, MenuAction);
 /// The context menu for a row: a title and its entries.
 ///
 /// Keep the order in sync with the Android app (`menuFor` in MainViewModel.kt):
-/// "Play …" first for albums and artists, then the album, then the artist(s).
+/// "Play …" first for albums and artists, then "Add … to queue", then the
+/// album, then the artist(s).
 pub fn menu_for(row: &Row) -> Option<(String, Vec<MenuItem>)> {
     let album = |a: &Album| (format!("Go to album “{}”", a.name), MenuAction::OpenAlbum(a.clone()));
     let artist = |a: &Artist| (format!("Go to artist “{}”", a.name), MenuAction::OpenArtist(a.clone()));
     match row {
         Row::Track(t) => {
-            let mut items: Vec<MenuItem> = t.album_ref.iter().map(album).collect();
+            let mut items: Vec<MenuItem> = vec![("Add to queue".to_string(), MenuAction::AddToQueue(t.clone()))];
+            items.extend(t.album_ref.iter().map(album));
             items.extend(t.artist_refs.iter().map(artist));
             Some((t.name.clone(), items))
         }
         Row::Album(a) => {
-            let mut items = vec![("Play album".to_string(), MenuAction::PlayAlbum(a.clone())), album(a)];
+            let mut items = vec![
+                ("Play album".to_string(), MenuAction::PlayAlbum(a.clone())),
+                ("Add album to queue".to_string(), MenuAction::AddAlbumToQueue(a.clone())),
+                album(a),
+            ];
             items.extend(a.artist_refs.iter().map(artist));
             Some((a.name.clone(), items))
         }
@@ -387,6 +396,19 @@ impl App {
                         }
                         rows
                     }
+                    View::Queue => {
+                        let (current, next) = api.queue()?;
+                        let mut rows = Vec::new();
+                        if let Some(t) = current {
+                            rows.push(Row::Header("Now playing".into()));
+                            rows.push(Row::Track(t));
+                        }
+                        if !next.is_empty() {
+                            rows.push(Row::Header("Next up".into()));
+                            rows.extend(next.into_iter().map(Row::Track));
+                        }
+                        rows
+                    }
                     View::Artist(a) => {
                         let (tracks, albums) = api.artist_page(a)?;
                         let mut rows = Vec::new();
@@ -446,11 +468,42 @@ impl App {
 
     fn run_menu_action(&mut self, action: MenuAction) {
         match action {
+            MenuAction::AddToQueue(t) => {
+                let reload = self.view == View::Queue;
+                self.queue_add(move |api| {
+                    api.add_to_queue(&t.uri)?;
+                    Ok(format!("Added “{}” to the queue", t.name))
+                }, reload);
+            }
+            MenuAction::AddAlbumToQueue(a) => {
+                let reload = self.view == View::Queue;
+                self.queue_add(move |api| {
+                    let tracks = api.album_tracks(&a)?;
+                    for t in &tracks {
+                        api.add_to_queue(&t.uri)?;
+                    }
+                    Ok(format!("Added {} songs from “{}” to the queue", tracks.len(), a.name))
+                }, reload);
+            }
             MenuAction::OpenAlbum(a) => self.navigate(View::Album(a)),
             MenuAction::OpenArtist(a) => self.navigate(View::Artist(a)),
             MenuAction::PlayAlbum(a) => self.play(None, Some(json!({ "context_uri": a.uri }))),
             MenuAction::PlayArtist(a) => self.play(None, Some(json!({ "context_uri": a.uri }))),
         }
+    }
+
+    /// Run a queue addition; without an active speaker, say so.
+    fn queue_add<F>(&self, f: F, reload_view: bool)
+    where
+        F: FnOnce(&Api) -> Result<String> + Send + 'static,
+    {
+        self.bg(move |api| match f(api) {
+            Ok(info) => Ok(Msg::Done { info, reload_playlists: false, reload_view }),
+            Err(e) if api::is_no_device(&e) => {
+                Ok(Msg::Error("Nothing is playing: start playback on a speaker first, then queue songs.".into()))
+            }
+            Err(e) => Err(e.context("Add to queue")),
+        });
     }
 
     fn reload_view(&mut self) {
@@ -466,6 +519,7 @@ impl App {
             View::Album(a) => format!("◎ {} — {}", a.name, a.artists),
             View::Search(q) => format!("Search: “{q}”"),
             View::Artist(a) => format!("Artist: {}", a.name),
+            View::Queue => "Queue".into(),
         }
     }
 
@@ -505,8 +559,13 @@ impl App {
                 if let Some(id) = p.as_ref().and_then(|p| p.device.as_ref()).and_then(|d| d.id.clone()) {
                     self.set_last_device(&id);
                 }
+                let old = self.playback.as_ref().and_then(|p| p.track.as_ref()).map(|t| t.uri.clone());
+                let new = p.as_ref().and_then(|p| p.track.as_ref()).map(|t| t.uri.clone());
                 self.playback = p;
                 self.playback_at = Instant::now();
+                if self.view == View::Queue && old.is_some() && old != new {
+                    self.reload_view();
+                }
             }
             Msg::PlaybackError(e) => {
                 // Don't let a background poll overwrite a fresher message.
@@ -584,6 +643,11 @@ impl App {
         let body = match &self.view {
             View::Playlist(p) => json!({ "context_uri": p.uri, "offset": { "position": t.pos } }),
             View::Album(a) => json!({ "context_uri": a.uri, "offset": { "position": t.pos } }),
+            View::Queue => {
+                // Spotify's API can't jump to a queued song; offer the menu instead.
+                self.open_menu();
+                return;
+            }
             View::Liked | View::Search(_) | View::Artist(_) => {
                 let uris: Vec<&str> = self.rows[idx..]
                     .iter()
@@ -720,6 +784,7 @@ impl App {
             Char('m') | Menu => self.open_menu(),
             F(10) if k.modifiers.contains(KeyModifiers::SHIFT) => self.open_menu(),
             Backspace => self.go_back(),
+            Char('u') => self.navigate(View::Queue),
             Char('d') => self.open_devices(),
             Char(' ') => self.toggle_pause(),
             Char('n') => self.control("Next", |api| api.next()),

@@ -532,6 +532,24 @@ impl Api {
         }))
     }
 
+    /// The playback queue: the current track and what plays next. Spotify
+    /// mixes manually queued songs with upcoming context (playlist/album)
+    /// songs here, without saying which is which.
+    pub fn queue(&self) -> Result<(Option<Track>, Vec<Track>)> {
+        let v = self.get("/me/player/queue", &[])?;
+        let next = v["queue"]
+            .as_array()
+            .map(|a| a.iter().enumerate().filter_map(|(i, t)| parse_track(t, i, None)).collect())
+            .unwrap_or_default();
+        Ok((parse_track(&v["currently_playing"], 0, None), next))
+    }
+
+    /// Add a song to the end of the user's queue (on the active device).
+    pub fn add_to_queue(&self, uri: &str) -> Result<()> {
+        self.call(Method::POST, "/me/player/queue", &[("uri", uri.to_string())], None)?;
+        Ok(())
+    }
+
     pub fn devices(&self) -> Result<Vec<Device>> {
         let v = self.get("/me/player/devices", &[])?;
         Ok(v["devices"]

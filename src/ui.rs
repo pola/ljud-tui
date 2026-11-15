@@ -214,7 +214,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         }
         _ => Line::from(Span::styled(
             format!(
-                " {} · ? help · / search · d speakers · space play/pause · n/p next/prev · q quit",
+                " {} · ? help · / search · d speakers · u queue · m menu · space play/pause · q quit",
                 app.me.name
             ),
             Style::new().fg(Color::DarkGray),
@@ -235,6 +235,7 @@ const HELP: &[(&str, &str)] = &[
     ("Enter", "open playlist/album/artist · play track"),
     ("m", "menu for the selected song/album/artist"),
     ("Backspace", "back to the previous list"),
+    ("u", "queue (up next); add songs via the m menu"),
     ("/", "search tracks, albums, playlists"),
     ("d", "speakers: Enter = play there, e = rename, r = refresh"),
     ("space", "play / pause"),
